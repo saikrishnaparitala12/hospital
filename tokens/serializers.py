@@ -14,7 +14,8 @@ class TokenSerializer(serializers.ModelSerializer):
             "department", "department_name",
             "counter", "counter_name",
             "patient_phone", "estimated_time",
-            "checked_in_at", "completed_at", "notes",
+            "checked_in_at", "completed_at",
+            "issue_reason", "notes",
             "created_at",
         ]
         read_only_fields = ["id", "token_number", "date", "status", "estimated_time", "created_at"]
@@ -22,6 +23,7 @@ class TokenSerializer(serializers.ModelSerializer):
 
 class IssueTokenSerializer(serializers.Serializer):
     department_id = serializers.IntegerField()
+    issue_reason = serializers.CharField(required=False, allow_blank=True, default="")
 
 
 class QueueSerializer(serializers.ModelSerializer):

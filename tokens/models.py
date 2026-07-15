@@ -32,6 +32,7 @@ class PatientToken(BaseModel):
     estimated_time = models.DateTimeField(null=True, blank=True)
     checked_in_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    issue_reason = models.TextField(blank=True, help_text="Patient's complaint / reason for visit")
     notes = models.TextField(blank=True)
 
     class Meta:

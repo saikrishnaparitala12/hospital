@@ -22,7 +22,7 @@ def _estimate_time(department: Department, date, token_number: int):
     return timezone.now() + timedelta(minutes=minutes)
 
 
-def issue_token(user, department_id: int) -> PatientToken:
+def issue_token(user, department_id: int, issue_reason: str = "") -> PatientToken:
     try:
         department = Department.objects.get(id=department_id, is_active=True)
     except Department.DoesNotExist:
@@ -50,7 +50,25 @@ def issue_token(user, department_id: int) -> PatientToken:
         token_number=number,
         date=today,
         estimated_time=estimated,
+        issue_reason=issue_reason,
     )
+
+    # Notify patient token issued (push + SMS)
+    try:
+        from notifications.services import notify_token_issued
+        notify_token_issued(token)
+    except Exception:
+        pass
+
+    # Schedule 30-min reminder before estimated time
+    if estimated:
+        from notifications.services import schedule_reminder
+        from notifications.tasks import send_30min_reminder
+        reminder_time = estimated - timedelta(minutes=30)
+        schedule_reminder(token, reminder_time)
+        delay_seconds = max(0, int((reminder_time - timezone.now()).total_seconds()))
+        send_30min_reminder.apply_async(args=[token.id], countdown=delay_seconds)
+
     return token
 
 

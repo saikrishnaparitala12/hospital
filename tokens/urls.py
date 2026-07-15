@@ -8,6 +8,7 @@ from .views import (
     CompleteTokenView,
     MissedTokenView,
     QueueView,
+    SendReminderView,
 )
 
 urlpatterns = [
@@ -18,5 +19,6 @@ urlpatterns = [
     path("tokens/<int:pk>/cancel/", CancelTokenView.as_view(), name="token-cancel"),
     path("tokens/<int:pk>/complete/", CompleteTokenView.as_view(), name="token-complete"),
     path("tokens/<int:pk>/missed/", MissedTokenView.as_view(), name="token-missed"),
+    path("tokens/<int:pk>/send-reminder/", SendReminderView.as_view(), name="token-send-reminder"),
     path("departments/<int:dept_pk>/queue/", QueueView.as_view(), name="department-queue"),
 ]

@@ -7,7 +7,7 @@ from common.models import BaseModel
 class Role(models.TextChoices):
     ADMIN = "admin", "Admin"
     DOCTOR = "doctor", "Doctor"
-    RECEPTIONIST = "receptionist", "Receptionist"
+    TOKEN_ADMIN = "token_admin", "Token Admin"
     PATIENT = "patient", "Patient"
 
 

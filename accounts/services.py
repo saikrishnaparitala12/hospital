@@ -5,12 +5,12 @@ from common.exceptions import ServiceError
 from .models import User, OTP, FCMToken
 
 
-def register_user(validated_data: dict) -> User:
+def register_user(validated_data: dict) -> dict:
     password = validated_data.pop("password")
     user = User(**validated_data)
     user.set_password(password)
     user.save()
-    return user
+    return _get_tokens(user)
 
 
 def login_user(phone: str, password: str) -> dict:
@@ -57,8 +57,13 @@ def send_otp(phone: str) -> None:
         code=code,
         expires_at=timezone.now() + timedelta(minutes=10),
     )
-    # TODO: integrate SMS gateway here
-    # sms_service.send(phone, f"Your OTP is {code}")
+    # Send OTP via AWS SNS SMS
+    try:
+        from .utils import send_sms_via_sns
+        send_sms_via_sns(phone, f"Your hospital OTP is {code}. Valid for 10 minutes. Do not share.")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"SNS SMS failed for {phone}: {e}")
 
 
 def verify_otp(phone: str, code: str) -> dict:
