@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Department, Counter, HospitalConfig
+from .models import Department, Counter
 
 
 class CounterInline(admin.TabularInline):
@@ -13,9 +13,3 @@ class DepartmentAdmin(admin.ModelAdmin):
     list_filter = ["is_active"]
     search_fields = ["name"]
     inlines = [CounterInline]
-
-
-@admin.register(HospitalConfig)
-class HospitalConfigAdmin(admin.ModelAdmin):
-    list_display = ["key", "value", "description"]
-    search_fields = ["key"]

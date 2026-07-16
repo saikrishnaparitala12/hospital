@@ -1,8 +1,8 @@
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from common.responses import success_response
-from .models import Department, Counter, HospitalConfig
-from .serializers import DepartmentSerializer, CounterSerializer, HospitalConfigSerializer
+from .models import Department, Counter
+from .serializers import DepartmentSerializer, CounterSerializer
 
 
 class DepartmentListCreateView(APIView):
@@ -64,17 +64,4 @@ class CounterListCreateView(APIView):
         serializer = CounterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save(department_id=dept_pk)
-        return success_response(serializer.data)
-
-
-class HospitalConfigView(APIView):
-    permission_classes = [IsAdminUser]
-
-    def get(self, request):
-        return success_response(HospitalConfigSerializer(HospitalConfig.objects.all(), many=True).data)
-
-    def post(self, request):
-        serializer = HospitalConfigSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
         return success_response(serializer.data)

@@ -70,7 +70,6 @@ class MedicalIDView(APIView):
 
     def get(self, request):
         patient = services.get_or_create_patient(request.user)
-        medical_id, _ = patient.__class__.objects.get_or_create(id=patient.id)
         from .models import MedicalID
         obj, _ = MedicalID.objects.get_or_create(patient=patient)
         return success_response(MedicalIDSerializer(obj).data)

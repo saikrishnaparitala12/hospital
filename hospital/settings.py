@@ -30,6 +30,7 @@ INSTALLED_APPS = [
     'tokens',
     'notifications',
     'common',
+    'insurance_network',
 ]
 
 MIDDLEWARE = [
@@ -125,6 +126,18 @@ SIMPLE_JWT = {
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0')
 CELERY_RESULT_BACKEND = CELERY_BROKER_URL
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+
+# Insurance Network
+INSURANCE_NETWORK_STALE_AFTER_HOURS = int(os.environ.get('INSURANCE_NETWORK_STALE_AFTER_HOURS', 24))
+
+# Celery Beat: refresh all insurance networks every 24 hours
+from celery.schedules import crontab
+CELERY_BEAT_SCHEDULE = {
+    'refresh-insurance-networks-daily': {
+        'task': 'insurance_network.tasks.refresh_all_insurance_networks',
+        'schedule': crontab(hour=2, minute=0),  # 2 AM IST daily
+    },
+}
 
 # AWS (SNS for SMS OTP + notifications)
 AWS_REGION = os.environ.get('AWS_REGION', 'ap-south-1')

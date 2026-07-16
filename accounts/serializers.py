@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import User, FCMToken
+from .models import User, FCMToken, Role
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -12,6 +12,15 @@ class RegisterSerializer(serializers.ModelSerializer):
     def validate_phone(self, value):
         if User.objects.filter(phone=value).exists():
             raise serializers.ValidationError("Phone number already registered.")
+        return value
+
+    def validate_role(self, value):
+        # ambulance role can only be assigned by admin via Django admin or direct DB — not via public register
+        restricted = [Role.AMBULANCE, Role.ADMIN]
+        if value in restricted:
+            raise serializers.ValidationError(
+                f"Role '{value}' cannot be self-registered. Contact the administrator."
+            )
         return value
 
 

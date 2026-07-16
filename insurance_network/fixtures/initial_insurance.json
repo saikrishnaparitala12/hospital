@@ -1,0 +1,16 @@
+[
+  {
+    "model": "insurance_network.insurancecompany",
+    "pk": 1,
+    "fields": {
+      "name": "Star Health and Allied Insurance",
+      "slug": "star-health",
+      "website": "https://www.starhealth.in",
+      "logo_url": "https://www.starhealth.in/images/logo.png",
+      "is_active": true,
+      "last_scraped_at": null,
+      "created_at": "2024-01-01T00:00:00Z",
+      "updated_at": "2024-01-01T00:00:00Z"
+    }
+  }
+]

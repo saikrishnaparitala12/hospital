@@ -80,6 +80,7 @@ JWT tokens:
 | `doctor` | Hospital clinical staff |
 | `token_admin` | Issues tokens on behalf of patients, sends reminders, completes/misses tokens |
 | `admin` | Full access, staff/superuser |
+| `ambulance` | Ambulance service operator. Assigned by admin only — cannot self-register. |
 
 ---
 
@@ -139,7 +140,8 @@ Register a new user.
   "role": "patient"
 }
 ```
-> `role` options: `patient`, `doctor`, `token_admin`, `admin`
+> `role` options: `patient`, `doctor`, `token_admin`
+> `ambulance` and `admin` roles cannot be self-registered — must be assigned by an administrator.
 
 **Response** `201`
 ```json
@@ -692,46 +694,6 @@ Add a counter to a department.
 
 ---
 
-### GET `/api/v1/hospital-config/`
-List all hospital configuration key-value pairs.
-
-**Auth**: Admin only
-
-**Response** `200`
-```json
-{
-  "message": "Success",
-  "data": [
-    {
-      "id": 1,
-      "key": "max_tokens_per_day",
-      "value": "100",
-      "description": "Maximum tokens issued per department per day"
-    }
-  ]
-}
-```
-
----
-
-### POST `/api/v1/hospital-config/`
-Create a hospital config entry.
-
-**Auth**: Admin only
-
-**Payload**
-```json
-{
-  "key": "max_tokens_per_day",
-  "value": "100",
-  "description": "Maximum tokens issued per department per day"
-}
-```
-
-**Response** `200` — created config object
-
----
-
 ## Token APIs — `/api/v1/tokens/`
 
 ### POST `/api/v1/tokens/issue/`
@@ -1118,8 +1080,6 @@ Admin manually sends a custom notification to any user (push + optional SMS).
 | DELETE | `/api/v1/departments/<id>/` | Admin | Delete department |
 | GET | `/api/v1/departments/<id>/counters/` | Required | List counters |
 | POST | `/api/v1/departments/<id>/counters/` | Admin | Add counter |
-| GET | `/api/v1/hospital-config/` | Admin | List config |
-| POST | `/api/v1/hospital-config/` | Admin | Create config |
 | POST | `/api/v1/tokens/issue/` | token_admin / admin | Issue token for patient |
 | GET | `/api/v1/tokens/my/` | Required | My tokens |
 | GET | `/api/v1/tokens/<id>/` | Required | Token detail |

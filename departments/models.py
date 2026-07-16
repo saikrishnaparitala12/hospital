@@ -19,15 +19,3 @@ class Counter(BaseModel):
 
     def __str__(self):
         return f"{self.department.name} - {self.name}"
-
-
-class HospitalConfig(BaseModel):
-    key = models.CharField(max_length=100, unique=True)
-    value = models.TextField()
-    description = models.CharField(max_length=255, blank=True)
-
-    def __str__(self):
-        return f"{self.key} = {self.value}"
-
-    class Meta:
-        verbose_name = "Hospital Configuration"

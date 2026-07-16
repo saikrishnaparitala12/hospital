@@ -9,6 +9,7 @@ class Role(models.TextChoices):
     DOCTOR = "doctor", "Doctor"
     TOKEN_ADMIN = "token_admin", "Token Admin"
     PATIENT = "patient", "Patient"
+    AMBULANCE = "ambulance", "Ambulance"
 
 
 class UserManager(BaseUserManager):

@@ -11,4 +11,5 @@ urlpatterns = [
     path('api/v1/', include('departments.urls')),
     path('api/v1/', include('tokens.urls')),
     path('api/v1/', include('notifications.urls')),
+    path('api/v1/', include('insurance_network.urls')),
 ]
