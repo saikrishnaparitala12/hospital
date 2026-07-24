@@ -32,8 +32,11 @@ class Hospital(BaseModel):
     geocoded_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        unique_together = [("normalized_name", "pincode")]
-        indexes = [models.Index(fields=["latitude", "longitude"], name="hospital_geo_idx")]
+        unique_together = [("normalized_name", "normalized_address", "pincode")]
+        indexes = [
+            models.Index(fields=["latitude", "longitude"], name="hospital_geo_idx"),
+            models.Index(fields=["normalized_name", "pincode"], name="hospital_name_pin_idx"),
+        ]
 
     def __str__(self):
         return f"{self.name} — {self.city}"

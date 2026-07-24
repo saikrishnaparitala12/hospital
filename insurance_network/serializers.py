@@ -3,9 +3,22 @@ from .models import InsuranceCompany, Hospital
 
 
 class InsuranceCompanySerializer(serializers.ModelSerializer):
+    is_syncing = serializers.SerializerMethodField()
+    hospital_count = serializers.SerializerMethodField()
+
     class Meta:
         model = InsuranceCompany
-        fields = ["id", "name", "slug", "logo_url", "website", "last_scraped_at"]
+        fields = ["id", "name", "slug", "logo_url", "website", "last_scraped_at", "is_syncing", "hospital_count"]
+
+    def get_is_syncing(self, obj) -> bool:
+        if not obj.pk:
+            return False
+        return obj.scrape_logs.filter(status="running").exists()
+
+    def get_hospital_count(self, obj) -> int:
+        if not obj.pk:
+            return 0
+        return obj.hospital_networks.filter(is_active=True).count()
 
 
 class HospitalSerializer(serializers.ModelSerializer):

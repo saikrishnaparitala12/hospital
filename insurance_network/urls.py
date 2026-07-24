@@ -8,7 +8,7 @@ from .views import (
 
 urlpatterns = [
     path("insurance/", InsuranceSearchView.as_view(), name="insurance-search"),
-    path("insurance/<slug:slug>/hospitals/", HospitalsByInsuranceView.as_view(), name="hospitals-by-insurance"),
+    path("insurance/<str:slug>/hospitals/", HospitalsByInsuranceView.as_view(), name="hospitals-by-insurance"),
     path("hospitals/nearby/", NearbyHospitalsView.as_view(), name="nearby-hospitals"),
-    path("insurance/<slug:slug>/hospitals/nearby/", NearbyHospitalsByInsuranceView.as_view(), name="nearby-hospitals-by-insurance"),
+    path("insurance/<str:slug>/hospitals/nearby/", NearbyHospitalsByInsuranceView.as_view(), name="nearby-hospitals-by-insurance"),
 ]

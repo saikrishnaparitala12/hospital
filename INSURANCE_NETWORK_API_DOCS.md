@@ -1,432 +1,453 @@
-# Insurance Network Hospital API — Documentation
+# Insurance Network Hospital Feature
 
-## Overview
+## Goal
 
-The Insurance Network Hospital feature allows patients to:
-- Search for insurance companies
-- Browse all hospitals that accept a specific insurance
-- Find nearby hospitals based on their GPS coordinates
-- Find nearby hospitals filtered by insurance provider
+This module powers insurance-based hospital discovery similar to Practo or MediBuddy:
 
-Hospital data is scraped from insurance provider websites using **Playwright** and stored in PostgreSQL. API responses are always served from the database — scraping never happens during a request.
+- Patients search supported insurance companies.
+- Patients select an insurance company and get hospitals that accept it.
+- Patients can find nearby hospitals using latitude and longitude.
+- Scraping never runs inside API requests.
+- Scraped data is stored in PostgreSQL and served from the database.
+- Missing or stale data queues a background sync through Celery.
 
----
+Implemented providers:
 
-## Architecture Summary
+- `star-health` — Star Health and Allied Insurance
+- `hdfc-life` — HDFC Life/HDFC ERGO health-claim network links sourced from Policybazaar
 
+## Folder Structure
+
+```text
+insurance_network/
+  admin.py
+  apps.py
+  models.py
+  serializers.py
+  services.py
+  tasks.py
+  urls.py
+  views.py
+  utils.py
+  tests.py
+  fixtures/
+    initial_insurance.json
+  management/
+    commands/
+      sync_insurance_networks.py
+  scrapers/
+    base.py
+    hdfc_life.py
+    registry.py
+    star_health.py
 ```
-Patient Request
-      │
-      ▼
-  API View  ──── reads from ────▶  PostgreSQL (Hospital / InsuranceHospitalNetwork)
-      │
-      └── data stale? ──── fires ────▶  Celery Task  ──▶  Playwright Scraper
-                                              │
-                                              ▼
-                                     Normalize + Geocode
-                                              │
-                                              ▼
-                                         Save to DB
+
+## Architecture
+
+```text
+API request
+  |
+  |-- search insurance -> registry + DB metadata
+  |
+  |-- hospitals by insurance
+        |
+        |-- DB has active mappings -> return immediately
+        |
+        |-- DB missing/stale -> queue Celery sync
+        |
+        |-- API still returns immediately; no scraping in request
+
+Celery worker / management command
+  |
+  |-- load provider scraper from registry
+  |-- scrape with Playwright
+  |-- normalize hospital name/address
+  |-- geocode once if needed
+  |-- upsert Hospital and InsuranceHospitalNetwork rows
+  |-- write ScrapeLog
 ```
 
-### Key Design Rules
-- **No scraping during API requests** — views only read from DB
-- **Stale check** — if `last_scraped_at` is older than 24 hours, a background sync is triggered automatically
-- **Geocoding once** — latitude/longitude is fetched from OSM Nominatim once and stored permanently
-- **Deduplication** — hospitals are matched by `normalized_name + pincode` to avoid duplicates across scrapers
+## Design Rules
 
----
+- API views do not scrape.
+- API views only query PostgreSQL and queue background work.
+- Each provider gets its own scraper class implementing `BaseInsuranceScraper`.
+- `ScrapedHospital` is the scraper output contract.
+- Sync failures never delete old hospital data.
+- Hospital deduplication uses `normalized_name + normalized_address + pincode`.
+- Geocoding is done once per hospital and persisted.
+- Stale data is refreshed in the background while old DB data is returned immediately.
 
-## Base URL
+## Database Schema
 
-All endpoints are prefixed with:
-```
+### InsuranceCompany
+
+Stores provider metadata.
+
+| Field | Purpose |
+|---|---|
+| `name` | Display name |
+| `slug` | API/provider key |
+| `website` | Provider website |
+| `logo_url` | Optional logo |
+| `is_active` | Feature availability |
+| `last_scraped_at` | Last successful sync time |
+
+### Hospital
+
+Stores normalized hospital records shared across providers.
+
+| Field | Purpose |
+|---|---|
+| `name` | Original hospital name |
+| `normalized_name` | Normalized name for matching |
+| `address` | Original address |
+| `normalized_address` | Normalized address |
+| `city`, `state`, `pincode` | Location fields |
+| `phone` | Contact number |
+| `latitude`, `longitude` | Stored geocode |
+| `geocoded_at` | Geocode timestamp |
+
+### InsuranceHospitalNetwork
+
+Many-to-many mapping between insurance and hospitals.
+
+| Field | Purpose |
+|---|---|
+| `insurance` | Insurance FK |
+| `hospital` | Hospital FK |
+| `plan_types` | JSON list, e.g. `["Network Hospital"]` |
+| `is_active` | Mapping status |
+| `source_url` | Scrape source |
+
+### ScrapeLog
+
+Operational monitoring table for every sync attempt.
+
+| Field | Purpose |
+|---|---|
+| `status` | `running`, `success`, or `failed` |
+| `hospitals_found` | Saved row count |
+| `error_message` | Failure details |
+| `started_at`, `finished_at` | Timing |
+
+## API Design
+
+Base path:
+
+```text
 /api/v1/
 ```
 
----
+All insurance network endpoints are public (`AllowAny`).
 
-## Authentication
+### Search Insurance
 
-All insurance network endpoints are **public** (`AllowAny`) — no JWT token required.
+```http
+GET /api/v1/insurance/?q=star
+```
 
----
+Response:
 
-## Standard Response Format
-
-### Success
 ```json
 {
-  "id": 1,
-  "name": "Star Health and Allied Insurance",
-  ...
+  "success": true,
+  "status": "ok",
+  "query": "star",
+  "count": 1,
+  "results": [
+    {
+      "id": null,
+      "name": "Star Health and Allied Insurance",
+      "slug": "star-health",
+      "logo_url": "https://www.starhealth.in/images/logo.png",
+      "website": "https://www.starhealth.in",
+      "last_scraped_at": null,
+      "is_syncing": false,
+      "hospital_count": 0
+    }
+  ]
 }
 ```
-> Insurance network endpoints return DRF's default response format (plain JSON array or object), not the `{ message, data }` wrapper used by other APIs.
 
----
+### Hospitals By Insurance
 
-## Endpoints
-
----
-
-### GET `/api/v1/insurance/`
-Search for insurance companies.
-
-**Auth**: None
-
-**Query Params**
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `q` | string | No | Search by name (case-insensitive contains). Omit to list all. |
-
-**Examples**
-```
-GET /api/v1/insurance/
-GET /api/v1/insurance/?q=star
-GET /api/v1/insurance/?q=hdfc
-```
-
-**Response** `200`
-```json
-[
-  {
-    "id": 1,
-    "name": "Star Health and Allied Insurance",
-    "slug": "star-health",
-    "logo_url": "https://www.starhealth.in/images/logo.png",
-    "website": "https://www.starhealth.in",
-    "last_scraped_at": "2025-01-15T02:00:00Z"
-  }
-]
-```
-
-**Field Reference**
-| Field | Description |
-|-------|-------------|
-| `slug` | URL-safe identifier used in other endpoints |
-| `last_scraped_at` | When hospital data was last synced. `null` means never scraped yet. |
-
----
-
-### GET `/api/v1/insurance/<slug>/hospitals/`
-Get all hospitals that accept a specific insurance.
-
-**Auth**: None
-
-**Path Params**
-| Param | Description |
-|-------|-------------|
-| `slug` | Insurance company slug (e.g. `star-health`) |
-
-**Example**
-```
+```http
 GET /api/v1/insurance/star-health/hospitals/
 ```
 
-**Response** `200`
+If data exists:
+
 ```json
-[
-  {
-    "id": 101,
-    "name": "Apollo Hospitals",
-    "address": "21 Greams Lane, Off Greams Road",
-    "city": "Chennai",
-    "state": "Tamil Nadu",
-    "pincode": "600006",
-    "phone": "044-28290200",
-    "latitude": "13.060416",
-    "longitude": "80.257616"
-  },
-  {
-    "id": 102,
-    "name": "Fortis Malar Hospital",
-    "address": "52 1st Main Road, Gandhi Nagar",
-    "city": "Chennai",
-    "state": "Tamil Nadu",
-    "pincode": "600020",
-    "phone": "044-42892222",
-    "latitude": "13.010357",
-    "longitude": "80.220978"
-  }
-]
+{
+  "success": true,
+  "syncing": false,
+  "status": "served_from_db",
+  "message": "Hospital network data served from the database.",
+  "refresh_queued": false,
+  "count": 1,
+  "hospitals": []
+}
 ```
 
-**Notes**
-- Returns an empty array `[]` if no hospitals have been synced yet
-- Automatically triggers a background sync if data is older than 24 hours (non-blocking)
+If data is missing and the sync task was queued:
 
-**Error** `404`
 ```json
-{ "detail": "Insurance not found." }
+{
+  "success": true,
+  "syncing": true,
+  "status": "sync_queued",
+  "message": "Hospital network data is being synchronized. Please try again in a few minutes.",
+  "count": 0,
+  "hospitals": []
+}
 ```
 
----
+If provider is not registered:
 
-### GET `/api/v1/hospitals/nearby/`
-Find hospitals near a given GPS location.
-
-**Auth**: None
-
-**Query Params**
-| Param | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `lat` | float | Yes | — | Patient's latitude |
-| `lon` | float | Yes | — | Patient's longitude |
-| `radius` | float | No | `10` | Search radius in kilometres |
-
-**Example**
-```
-GET /api/v1/hospitals/nearby/?lat=13.0827&lon=80.2707&radius=5
-```
-
-**Response** `200`
 ```json
-[
-  {
-    "id": 101,
-    "name": "Apollo Hospitals",
-    "address": "21 Greams Lane, Off Greams Road",
-    "city": "Chennai",
-    "state": "Tamil Nadu",
-    "phone": "044-28290200",
-    "latitude": "13.060416",
-    "longitude": "80.257616",
-    "distance_km": 2.41
-  },
-  {
-    "id": 105,
-    "name": "MIOT International",
-    "address": "4/112 Mount Poonamallee Road",
-    "city": "Chennai",
-    "state": "Tamil Nadu",
-    "phone": "044-22490000",
-    "latitude": "13.041200",
-    "longitude": "80.175300",
-    "distance_km": 4.87
-  }
-]
+{
+  "success": false,
+  "status": "provider_not_supported",
+  "message": "This insurance provider is not available for network hospital lookup yet.",
+  "query": "hdfc-lif",
+    "suggestions": ["Star Health and Allied Insurance", "HDFC Life Insurance"],
+  "hospitals": []
+}
 ```
 
-**Notes**
-- Results are sorted by `distance_km` ascending (nearest first)
-- Only hospitals with geocoded coordinates (`latitude` / `longitude` not null) are returned
-- Returns empty array `[]` if no hospitals are within the radius
+### Nearby Hospitals
 
-**Error** `400`
+```http
+GET /api/v1/hospitals/nearby/?lat=13.0827&lon=80.2707&radius=10
+```
+
+Response:
+
 ```json
-{ "detail": "lat and lon are required numeric parameters." }
+{
+  "success": true,
+  "status": "ok",
+  "count": 1,
+  "hospitals": [
+    {
+      "id": 1,
+      "name": "Apollo Hospitals",
+      "address": "Greams Road",
+      "city": "Chennai",
+      "state": "Tamil Nadu",
+      "phone": "044-28290200",
+      "latitude": "13.060416",
+      "longitude": "80.257616",
+      "distance_km": 2.41
+    }
+  ]
+}
 ```
 
----
+### Nearby Hospitals By Insurance
 
-### GET `/api/v1/insurance/<slug>/hospitals/nearby/`
-Find hospitals near a location that also accept a specific insurance.
-
-**Auth**: None
-
-**Path Params**
-| Param | Description |
-|-------|-------------|
-| `slug` | Insurance company slug (e.g. `star-health`) |
-
-**Query Params**
-| Param | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `lat` | float | Yes | — | Patient's latitude |
-| `lon` | float | Yes | — | Patient's longitude |
-| `radius` | float | No | `10` | Search radius in kilometres |
-
-**Example**
-```
+```http
 GET /api/v1/insurance/star-health/hospitals/nearby/?lat=13.0827&lon=80.2707&radius=10
 ```
 
-**Response** `200`
-```json
-[
-  {
-    "id": 101,
-    "name": "Apollo Hospitals",
-    "address": "21 Greams Lane, Off Greams Road",
-    "city": "Chennai",
-    "state": "Tamil Nadu",
-    "phone": "044-28290200",
-    "latitude": "13.060416",
-    "longitude": "80.257616",
-    "distance_km": 2.41
-  }
-]
+If data is missing, this endpoint queues sync and returns the same `sync_queued` response shape.
+
+HDFC Life example:
+
+```http
+GET /api/v1/insurance/hdfc-life/hospitals/
 ```
 
-**Notes**
-- Combines insurance filter + proximity filter
-- Results sorted by `distance_km` ascending
-- Automatically triggers background sync if data is stale
+If no HDFC Life hospital data is stored yet, the endpoint returns `sync_queued` and the Celery worker runs the provider scraper in the background.
+The `hdfc-ergo` alias also resolves to this provider because Policybazaar publishes the hospital network under HDFC ERGO pages.
 
-**Errors**
-```json
-{ "detail": "Insurance not found." }          // 404 — invalid slug
-{ "detail": "lat and lon are required numeric parameters." }  // 400 — missing coords
+## Synchronization Flow
+
+### Automatic API Trigger
+
+When a patient requests hospitals for a supported provider:
+
+- If DB has active hospital mappings, return DB data immediately.
+- If DB has no data, queue `sync_insurance_network`.
+- If DB data exists but `last_scraped_at` is older than `INSURANCE_NETWORK_STALE_AFTER_HOURS`, return DB data and queue refresh.
+
+### Celery Task
+
+```python
+sync_insurance_network.delay("star-health")
 ```
 
----
+The task retries failed syncs up to 3 times with a 5 minute delay.
 
-## API Summary Table
+### Celery Beat
 
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/v1/insurance/` | None | Search insurance companies |
-| GET | `/api/v1/insurance/<slug>/hospitals/` | None | All hospitals by insurance |
-| GET | `/api/v1/hospitals/nearby/` | None | Nearby hospitals (any insurance) |
-| GET | `/api/v1/insurance/<slug>/hospitals/nearby/` | None | Nearby hospitals by insurance |
+`hospital/settings.py` schedules a daily refresh:
 
----
-
-## Data Models
-
-### InsuranceCompany
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | int | Primary key |
-| `name` | string | Full insurance company name |
-| `slug` | string | URL-safe unique identifier |
-| `website` | string | Insurance provider website |
-| `logo_url` | string | Logo image URL |
-| `is_active` | bool | Whether this provider is enabled |
-| `last_scraped_at` | datetime | Last successful scrape timestamp |
-
-### Hospital
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | int | Primary key |
-| `name` | string | Hospital name (original) |
-| `normalized_name` | string | Lowercased, cleaned name (used for deduplication) |
-| `address` | string | Full address |
-| `city` | string | City |
-| `state` | string | State |
-| `pincode` | string | PIN code |
-| `phone` | string | Contact number |
-| `latitude` | decimal | GPS latitude (null until geocoded) |
-| `longitude` | decimal | GPS longitude (null until geocoded) |
-| `geocoded_at` | datetime | When geocoding was performed |
-
-### InsuranceHospitalNetwork
-| Field | Type | Description |
-|-------|------|-------------|
-| `insurance` | FK | InsuranceCompany |
-| `hospital` | FK | Hospital |
-| `plan_types` | JSON array | e.g. `["cashless", "reimbursement"]` |
-| `is_active` | bool | Whether this mapping is active |
-| `source_url` | string | URL scraped from |
-
----
-
-## Background Sync
-
-### Automatic (Stale Check)
-When a patient hits `/insurance/<slug>/hospitals/` or the nearby-by-insurance endpoint, the system checks if `last_scraped_at` is older than **24 hours**. If stale, a Celery task is queued automatically — the API response is not delayed.
-
-### Celery Beat (Daily Cron)
-A scheduled task runs every day at **2:00 AM IST** to refresh all active insurance providers:
-```
-Task: insurance_network.tasks.refresh_all_insurance_networks
-Schedule: crontab(hour=2, minute=0)
+```python
+CELERY_BEAT_SCHEDULE = {
+    "refresh-insurance-networks-daily": {
+        "task": "insurance_network.tasks.refresh_all_insurance_networks",
+        "schedule": crontab(hour=2, minute=0),
+    },
+}
 ```
 
-### Manual Trigger (Management Command)
+### Manual Command
+
 ```bash
-# Sync one provider synchronously (no Celery needed — good for testing)
 python manage.py sync_insurance_networks --slug star-health --sync
-
-# Queue one provider via Celery
+python manage.py sync_insurance_networks --slug hdfc-life --sync --no-geocode
 python manage.py sync_insurance_networks --slug star-health
-
-# Queue all active providers via Celery
 python manage.py sync_insurance_networks
 ```
 
-### ScrapeLog
-Every sync attempt is recorded in the `ScrapeLog` table:
+## Scraper Contract
 
-| Field | Description |
-|-------|-------------|
-| `status` | `pending` → `running` → `success` / `failed` |
-| `hospitals_found` | Number of hospitals saved in this run |
-| `error_message` | Full error if status is `failed` |
-| `started_at` | When the scrape started |
-| `finished_at` | When the scrape finished |
+Every scraper extends:
 
-Viewable in Django Admin at `/admin/insurance_network/scrapelog/`
-
----
-
-## Adding a New Insurance Provider
-
-Only 2 steps required:
-
-**Step 1** — Create `insurance_network/scrapers/<provider>.py`:
 ```python
-from .base import BaseInsuranceScraper, ScrapedHospital
+class BaseInsuranceScraper(ABC):
+    insurance_slug: str
 
-class HdfcErgoScraper(BaseInsuranceScraper):
-    insurance_slug = "hdfc-ergo"
-
-    def scrape(self):
-        from playwright.sync_api import sync_playwright
-        hospitals = []
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto("https://www.hdfcergo.com/network-hospitals")
-            # ... scraping logic ...
-            browser.close()
-        return hospitals
+    @abstractmethod
+    def scrape(self) -> list[ScrapedHospital]:
+        ...
 ```
 
-**Step 2** — Register in `insurance_network/scrapers/registry.py`:
-```python
-from .hdfc_ergo import HdfcErgoScraper
+Scrapers return `ScrapedHospital` records:
 
+```python
+ScrapedHospital(
+    name="Apollo Hospitals",
+    address="Greams Road, Chennai",
+    city="Chennai",
+    state="Tamil Nadu",
+    pincode="600006",
+    phone="044-28290200",
+    plan_types=["Network Hospital"],
+    source_url="https://www.starhealth.in/lookup/hospital/",
+)
+```
+
+## Existing Providers
+
+### Star Health
+
+Registry slug:
+
+```text
+star-health
+```
+
+Source:
+
+```text
+https://www.starhealth.in/lookup/hospital/
+```
+
+### HDFC Life
+
+Registry slug:
+
+```text
+hdfc-life
+```
+
+Source references:
+
+```text
+https://www.hdfclife.com/claims
+https://www.policybazaar.com/network-hospitals/hdfc-ergo-network-hospitals/
+https://www.policybazaar.com/network-hospitals/hdfc-ergo-hospitals-delhi-delhi/
+https://www.policybazaar.com/network-hospitals/hdfc-ergo-hospitals-maharashtra-mumbai/
+```
+
+HDFC Life's claims page is kept as the provider reference. Hospital network data is scraped from Policybazaar's public HDFC ERGO network hospital pages during background sync, then saved to PostgreSQL with normalized hospital names, addresses, and one-time geocoding.
+
+## Adding Another Provider
+
+1. Create `insurance_network/scrapers/<provider>.py`.
+2. Implement `BaseInsuranceScraper`.
+3. Register it in `insurance_network/scrapers/registry.py`.
+
+Example:
+
+```python
 SCRAPER_REGISTRY = {
-    "star-health": StarHealthScraper,
-    "hdfc-ergo": HdfcErgoScraper,   # add this line
+    "care-health": ScraperEntry(
+        slug="care-health",
+        name="Care Health Insurance",
+        website="https://www.careinsurance.com",
+        logo_url="",
+        scraper_class=CareHealthScraper,
+        aliases=("Care", "Care Health"),
+    ),
 }
 ```
 
-**Step 3** — Seed the DB record (via Django Admin or fixture):
-```json
-{
-  "model": "insurance_network.insurancecompany",
-  "fields": {
-    "name": "HDFC ERGO General Insurance",
-    "slug": "hdfc-ergo",
-    "website": "https://www.hdfcergo.com",
-    "is_active": true
-  }
-}
-```
+No API or service changes are needed.
 
-All sync, geocoding, API, and scheduling logic is inherited automatically — no other changes needed.
+## Caching Strategy
 
----
+- PostgreSQL is the source of truth for API responses.
+- `last_scraped_at` decides whether data is stale.
+- Fresh DB data is returned immediately.
+- Stale DB data is returned immediately and refreshed asynchronously.
+- Failed syncs do not remove old valid records.
 
 ## Geocoding
 
-Hospital addresses are geocoded using **OpenStreetMap Nominatim** (free, no API key required).
+`insurance_network/utils.py` uses OpenStreetMap Nominatim.
 
-- Geocoding happens once per hospital during the first sync
-- Result stored in `latitude` / `longitude` fields permanently
-- Rate limited to 1 request/second per OSM policy
-- If geocoding fails, the hospital is still saved — it just won't appear in nearby searches until geocoded
+Rules:
 
-To switch to Google Maps Geocoding API, update `insurance_network/utils.py` → `geocode_address()`.
+- Geocode only during sync, never in API requests.
+- Geocode only if `latitude` is missing.
+- Save `latitude`, `longitude`, and `geocoded_at`.
+- Nearby search uses stored coordinates and Haversine distance.
 
----
+## Logging And Monitoring
 
-## Error Reference
+- Scrapers log page-level parse counts and failures.
+- `SyncService` writes `ScrapeLog` rows for every run.
+- Django Admin exposes `ScrapeLog`.
+- Celery retries transient sync failures.
+- Production should monitor failed `ScrapeLog` rows and Celery queue health.
 
-| Status | Body | Cause |
-|--------|------|-------|
-| `404` | `{ "detail": "Insurance not found." }` | Invalid or inactive insurance slug |
-| `400` | `{ "detail": "lat and lon are required numeric parameters." }` | Missing or non-numeric coordinates |
+## Testing Strategy
+
+Covered by `insurance_network/tests.py`:
+
+- Search returns registered providers.
+- Unknown providers return 404 without scraping.
+- Missing DB data queues background sync and does not scrape inline.
+- Fresh DB data returns immediately.
+- Stale DB data returns immediately and queues refresh.
+- Parser tests validate Star Health table parsing.
+- Sync tests validate normalization/upsert behavior.
+
+## Deployment Notes
+
+- Run PostgreSQL migrations.
+- Run Redis or another Celery broker.
+- Start Django app, Celery worker, and Celery Beat.
+- Install Playwright browsers:
+
+```bash
+python -m playwright install chromium
+```
+
+- Use a worker queue with enough memory for browser automation.
+- Set `INSURANCE_NETWORK_STALE_AFTER_HOURS` for refresh policy.
+- Keep scraper timeouts conservative.
+
+## Security Best Practices
+
+- Do not accept arbitrary scraper URLs from API users.
+- Only registered providers can be scraped.
+- Run Playwright in headless mode inside worker containers.
+- Apply request throttling/rate limits at the API layer if exposed publicly.
+- Keep browser and Playwright versions patched.
+- Store only public hospital network data.
+- Avoid logging sensitive patient coordinates beyond what is needed for debugging.
