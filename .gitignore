@@ -70,4 +70,6 @@ dump.rdb
 *.p12
 *.pfx
 secret_key.txt
+firebase-credentials.json
 firebase_credentials.json
+*-firebase-adminsdk-*.json

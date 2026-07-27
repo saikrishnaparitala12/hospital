@@ -143,3 +143,7 @@ CELERY_BEAT_SCHEDULE = {
 AWS_REGION = os.environ.get('AWS_REGION', 'ap-south-1')
 AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID', '')
 AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
+
+# Firebase Cloud Messaging
+FIREBASE_CREDENTIALS_PATH = os.environ.get('FIREBASE_CREDENTIALS_PATH', BASE_DIR / 'firebase-credentials.json')
+FIREBASE_DATABASE_URL = os.environ.get('FIREBASE_DATABASE_URL', '')

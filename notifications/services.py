@@ -6,13 +6,14 @@ from .models import NotificationLog, NotificationType, ReminderLog
 def send_push_notification(user, title: str, body: str, notification_type: str, token=None) -> NotificationLog:
     """
     Send FCM push notification to all user devices.
-    Replace the _send_fcm block with your actual Firebase Admin SDK call.
+    Uses real Firebase Admin SDK if configured, otherwise falls back to stub.
     """
     fcm_tokens = FCMToken.objects.filter(user=user).values_list("token", flat=True)
     fcm_response = None
 
     if fcm_tokens:
-        fcm_response = _send_fcm(list(fcm_tokens), title, body)
+        from .utils import send_fcm_notification
+        fcm_response = send_fcm_notification(list(fcm_tokens), title, body)
 
     log = NotificationLog.objects.create(
         user=user,
@@ -51,20 +52,98 @@ def send_manual_notification(user, title: str, body: str, send_sms: bool = False
     return log
 
 
-def _send_fcm(tokens: list, title: str, body: str) -> dict:
+def send_push_to_department(department_id: int, title: str, body: str, notification_type: str, data: dict = None) -> dict:
     """
-    Stub — replace with Firebase Admin SDK:
+    Send push notification to all patients with active tokens in a specific department today.
+    Used for department-wide announcements (e.g., "Cardiology department is running 30 min late").
+    """
+    from .utils import send_fcm_to_department
 
-    import firebase_admin
-    from firebase_admin import messaging
-    message = messaging.MulticastMessage(
-        notification=messaging.Notification(title=title, body=body),
-        tokens=tokens,
+    fcm_response = send_fcm_to_department(department_id, title, body, data)
+
+    # Log the notification for all affected users
+    from tokens.models import PatientToken
+    from common.choices import TokenStatus
+    from django.utils import timezone
+
+    today = timezone.now().date()
+    patients = (
+        PatientToken.objects.filter(
+            department_id=department_id,
+            date=today,
+            status__in=[TokenStatus.WAITING, TokenStatus.CHECKED_IN],
+        )
+        .select_related("patient")
+        .distinct("patient")
     )
-    response = messaging.send_each_for_multicast(message)
-    return {"success": response.success_count, "failure": response.failure_count}
+
+    for pt in patients:
+        NotificationLog.objects.create(
+            user=pt.patient,
+            notification_type=notification_type,
+            title=title,
+            body=body,
+            fcm_response=fcm_response,
+        )
+
+    return fcm_response
+
+
+def send_push_to_role(role: str, title: str, body: str, notification_type: str, data: dict = None) -> dict:
     """
-    return {"tokens": tokens, "status": "stub"}
+    Send push notification to all users with a specific role.
+    e.g., send to all doctors, all token admins, etc.
+    """
+    from .utils import send_fcm_to_role
+    from accounts.models import User
+
+    fcm_response = send_fcm_to_role(role, title, body, data)
+
+    users = User.objects.filter(role=role, is_active=True)
+    for user in users:
+        NotificationLog.objects.create(
+            user=user,
+            notification_type=notification_type,
+            title=title,
+            body=body,
+            fcm_response=fcm_response,
+        )
+
+    return fcm_response
+
+
+def send_bulk_push_to_patients(user_ids: list, title: str, body: str, notification_type: str, data: dict = None) -> dict:
+    """
+    Send push notification to a specific list of patients by user IDs.
+    Used when token admin wants to notify multiple specific patients.
+    """
+    from accounts.models import FCMToken
+
+    tokens_list = list(
+        FCMToken.objects.filter(user_id__in=user_ids)
+        .values_list("token", flat=True)
+    )
+
+    fcm_response = None
+    if tokens_list:
+        from .utils import send_fcm_notification
+        fcm_response = send_fcm_notification(tokens_list, title, body, data)
+
+    for user_id in user_ids:
+        from accounts.models import User
+        try:
+            user = User.objects.get(pk=user_id)
+            NotificationLog.objects.create(
+                user=user,
+                notification_type=notification_type,
+                title=title,
+                body=body,
+                fcm_response=fcm_response,
+            )
+        except User.DoesNotExist:
+            continue
+
+    return fcm_response
 
 
 def notify_token_issued(patient_token) -> None:

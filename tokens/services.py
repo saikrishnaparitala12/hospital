@@ -22,7 +22,17 @@ def _estimate_time(department: Department, date, token_number: int):
     return timezone.now() + timedelta(minutes=minutes)
 
 
-def issue_token(user, department_id: int, issue_reason: str = "") -> PatientToken:
+def issue_token(user, department_id: int, issue_reason: str = "", patient_id: int = None) -> PatientToken:
+    """
+    Issue a token for a patient.
+
+    Args:
+        user: The requesting user (token admin or the patient themselves)
+        department_id: Department to issue token for
+        issue_reason: Reason for visit
+        patient_id: If provided (by token admin), issue token for this patient.
+                    If None, issue token for the requesting user.
+    """
     try:
         department = Department.objects.get(id=department_id, is_active=True)
     except Department.DoesNotExist:
@@ -30,9 +40,23 @@ def issue_token(user, department_id: int, issue_reason: str = "") -> PatientToke
 
     today = timezone.now().date()
 
+    # Determine the patient - token admin can issue for others
+    if patient_id:
+        from accounts.models import User
+        try:
+            patient_user = User.objects.get(pk=patient_id, is_active=True)
+        except User.DoesNotExist:
+            raise ServiceError("Patient not found.")
+        # Only token_admin or admin can issue tokens for other patients
+        from accounts.models import Role
+        if user.role not in [Role.TOKEN_ADMIN, Role.ADMIN] and not user.is_staff:
+            raise ServiceError("Only token admin can issue tokens for other patients.")
+    else:
+        patient_user = user
+
     # Prevent duplicate active token for same dept on same day
     existing = PatientToken.objects.filter(
-        patient=user,
+        patient=patient_user,
         department=department,
         date=today,
         status__in=[TokenStatus.WAITING, TokenStatus.CHECKED_IN],
@@ -45,7 +69,7 @@ def issue_token(user, department_id: int, issue_reason: str = "") -> PatientToke
     estimated = _estimate_time(department, today, number)
 
     token = PatientToken.objects.create(
-        patient=user,
+        patient=patient_user,
         department=department,
         token_number=number,
         date=today,

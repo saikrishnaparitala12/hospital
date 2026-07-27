@@ -7,7 +7,11 @@ from . import services
 
 
 class IssueTokenView(APIView):
-    """Token admin issues a token on behalf of a patient."""
+    """
+    Issue a token.
+    - Token admin can issue for any patient (provide patient_id).
+    - Regular patients can issue for themselves (omit patient_id).
+    """
     permission_classes = [IsTokenAdminOrAdmin]
 
     def post(self, request):
@@ -17,6 +21,7 @@ class IssueTokenView(APIView):
             user=request.user,
             department_id=serializer.validated_data["department_id"],
             issue_reason=serializer.validated_data.get("issue_reason", ""),
+            patient_id=serializer.validated_data.get("patient_id"),
         )
         return success_response(TokenSerializer(token).data)
 
@@ -87,6 +92,32 @@ class QueueView(APIView):
             date = datetime.date.fromisoformat(date)
         queue = services.get_queue(dept_pk, date)
         return success_response(QueueSerializer(queue, many=True).data)
+
+
+class PatientListView(APIView):
+    """
+    Token admin lists all patients to select one for token issuance.
+    Supports search by phone or name.
+
+    GET /api/v1/tokens/patients/?search=phone_or_name
+    """
+    permission_classes = [IsTokenAdminOrAdmin]
+
+    def get(self, request):
+        from accounts.models import User, Role
+        from accounts.serializers import UserSerializer
+
+        search = request.query_params.get("search", "").strip()
+        patients = User.objects.filter(role=Role.PATIENT, is_active=True)
+
+        if search:
+            from django.db.models import Q
+            patients = patients.filter(
+                Q(phone__icontains=search) | Q(full_name__icontains=search)
+            )
+
+        patients = patients.order_by("full_name")[:50]
+        return success_response(UserSerializer(patients, many=True).data)
 
 
 class SendReminderView(APIView):

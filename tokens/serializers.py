@@ -22,8 +22,17 @@ class TokenSerializer(serializers.ModelSerializer):
 
 
 class IssueTokenSerializer(serializers.Serializer):
+    patient_id = serializers.IntegerField(required=False, help_text="Patient user ID. Token admin provides this to issue for a patient. Patient self-service omits this.")
     department_id = serializers.IntegerField()
     issue_reason = serializers.CharField(required=False, allow_blank=True, default="")
+
+    def validate_patient_id(self, value):
+        from accounts.models import User
+        try:
+            user = User.objects.get(pk=value, is_active=True)
+        except User.DoesNotExist:
+            raise serializers.ValidationError("Patient not found.")
+        return value
 
 
 class QueueSerializer(serializers.ModelSerializer):
