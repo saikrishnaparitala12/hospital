@@ -9,7 +9,7 @@ class CounterInline(admin.TabularInline):
 
 @admin.register(Department)
 class DepartmentAdmin(admin.ModelAdmin):
-    list_display = ["name", "average_service_time", "is_active", "created_at"]
+    list_display = ["name", "average_service_time", "reminder_threshold_tokens", "is_active", "created_at"]
     list_filter = ["is_active"]
     search_fields = ["name"]
     inlines = [CounterInline]

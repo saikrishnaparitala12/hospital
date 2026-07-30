@@ -71,7 +71,7 @@ def send_push_to_department(department_id: int, title: str, body: str, notificat
         PatientToken.objects.filter(
             department_id=department_id,
             date=today,
-            status__in=[TokenStatus.WAITING, TokenStatus.CHECKED_IN],
+            status__in=[TokenStatus.WAITING, TokenStatus.CHECKED_IN, TokenStatus.CALLED],
         )
         .select_related("patient")
         .distinct("patient")
@@ -147,23 +147,33 @@ def send_bulk_push_to_patients(user_ids: list, title: str, body: str, notificati
 
 
 def notify_token_issued(patient_token) -> None:
+    body = f"Your token #{patient_token.token_number} for {patient_token.department.name} has been issued."
     send_push_notification(
         user=patient_token.patient,
         title="Token Issued",
-        body=f"Your token #{patient_token.token_number} for {patient_token.department.name} has been issued.",
+        body=body,
         notification_type=NotificationType.TOKEN_ISSUED,
         token=patient_token,
     )
+    if patient_token.patient.phone:
+        send_sms_notification(patient_token.patient.phone, f"Hospital: {body}")
 
 
 def notify_token_called(patient_token) -> None:
+    counter = f" at {patient_token.counter.name}" if patient_token.counter else ""
+    body = (
+        f"Token #{patient_token.token_number} for {patient_token.department.name} "
+        f"has been called{counter}. Please proceed now."
+    )
     send_push_notification(
         user=patient_token.patient,
         title="Your Turn!",
-        body=f"Token #{patient_token.token_number} — please proceed to {patient_token.department.name}.",
+        body=body,
         notification_type=NotificationType.TOKEN_CALLED,
         token=patient_token,
     )
+    if patient_token.patient.phone:
+        send_sms_notification(patient_token.patient.phone, f"Hospital: {body}")
 
 
 def schedule_reminder(patient_token, scheduled_at) -> ReminderLog:

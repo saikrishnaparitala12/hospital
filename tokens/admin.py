@@ -4,10 +4,10 @@ from .models import PatientToken, DailyTokenSequence
 
 @admin.register(PatientToken)
 class PatientTokenAdmin(admin.ModelAdmin):
-    list_display = ["token_number", "patient", "department", "date", "status", "estimated_time"]
-    list_filter = ["status", "department", "date"]
+    list_display = ["token_number", "patient", "department", "date", "status", "is_emergency", "estimated_time"]
+    list_filter = ["status", "is_emergency", "department", "date"]
     search_fields = ["patient__phone", "patient__full_name"]
-    ordering = ["-date", "token_number"]
+    ordering = ["-date", "-is_emergency", "token_number"]
     actions = ["mark_completed", "mark_missed"]
 
     @admin.action(description="Mark selected tokens as completed")

@@ -70,7 +70,7 @@ def auto_complete_token(token_id: int):
         return
 
     # Only complete if still active — token admin may have already completed/cancelled it
-    if token.status not in [TokenStatus.WAITING, TokenStatus.CHECKED_IN]:
+    if token.status not in [TokenStatus.WAITING, TokenStatus.CHECKED_IN, TokenStatus.CALLED]:
         return
 
     token.status = TokenStatus.COMPLETED

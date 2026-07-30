@@ -78,7 +78,7 @@ JWT tokens:
 |------|-------------|
 | `patient` | Default role, receives tokens and notifications on their phone |
 | `doctor` | Hospital clinical staff |
-| `token_admin` | Issues tokens on behalf of patients, sends reminders, completes/misses tokens |
+| `token_admin` | Reception/token admin role. Issues tokens, calls the live queue, sends reminders, completes/misses tokens |
 | `admin` | Full access, staff/superuser |
 | `ambulance` | Ambulance service operator. Assigned by admin only — cannot self-register. |
 
@@ -697,25 +697,43 @@ Add a counter to a department.
 ## Token APIs — `/api/v1/tokens/`
 
 ### POST `/api/v1/tokens/issue/`
-Token admin issues a queue token on behalf of a patient who has arrived at the hospital.
+Issue a queue token.
 
-**Auth**: `token_admin` or `admin`
+**Auth**: Required
+
+**Who can use it**
+- `patient`: issues a self-service token for themselves. Omit `patient_id` and `patient_phone`.
+- `token_admin` / `admin`: reception flow. Issue for an existing `patient_id`, or provide `patient_phone` to find/create a patient.
 
 **Business Rules**:
-- Token admin selects the department and records the patient's complaint (`issue_reason`)
+- Reception selects the department/counter and records the patient's complaint (`issue_reason`)
+- Reception can mark `is_emergency=true`; emergency tokens jump ahead of normal waiting tokens
 - Only one active token per patient per department per day
 - On issue: push notification + SMS sent to patient's phone automatically
 - Celery schedules a 30-min reminder before the estimated time
 - 1 hour after the 30-min reminder fires → token auto-completes + patient notified
 
-**Payload**
+**Patient Self-Service Payload**
 ```json
 {
   "department_id": 1,
   "issue_reason": "Chest pain and shortness of breath"
 }
 ```
-> `issue_reason` is optional but recommended — records the patient's complaint/reason for visit.
+
+**Reception Payload**
+```json
+{
+  "department_id": 1,
+  "counter_id": 3,
+  "patient_phone": "9876543210",
+  "patient_name": "John Doe",
+  "issue_reason": "Chest pain and shortness of breath",
+  "is_emergency": true
+}
+```
+> `patient_id` can be used instead of `patient_phone`. Do not send both.
+> `issue_reason` is optional but recommended.
 
 **Response** `200`
 ```json
@@ -730,10 +748,20 @@ Token admin issues a queue token on behalf of a patient who has arrived at the h
     "department_name": "Cardiology",
     "counter": null,
     "counter_name": null,
+    "patient_name": "John Doe",
     "patient_phone": "9876543210",
     "estimated_time": "2025-01-15T11:30:00Z",
+    "queue_position": 1,
+    "tokens_away": 0,
+    "people_ahead": 0,
+    "estimated_wait_minutes": 0,
+    "is_next": true,
+    "current_serving_token_number": null,
+    "reminder_threshold_tokens": 3,
     "checked_in_at": null,
+    "called_at": null,
     "completed_at": null,
+    "is_emergency": true,
     "issue_reason": "Chest pain and shortness of breath",
     "notes": "",
     "created_at": "2025-01-15T10:00:00Z"
@@ -746,6 +774,7 @@ Token admin issues a queue token on behalf of a patient who has arrived at the h
 |--------|-------------|
 | `waiting` | Token issued, patient in queue |
 | `checked_in` | Patient has checked in at counter |
+| `called` | Token is currently being served / patient has been called |
 | `completed` | Service completed (manual or auto) |
 | `cancelled` | Cancelled by patient |
 | `missed` | Patient did not show up |
@@ -756,6 +785,23 @@ Token admin issues a queue token on behalf of a patient who has arrived at the h
 List all tokens for the current user (all dates, all statuses).
 
 **Auth**: Required
+
+**Response** `200`
+```json
+{
+  "message": "Success",
+  "data": [ { "...token object..." : "..." } ]
+}
+```
+
+---
+
+### GET `/api/v1/tokens/my/active-today/`
+List the current user's active tokens for today only.
+
+**Auth**: Required
+
+Use this for the patient app "Your token today" screen. Each token includes queue position, people ahead, current serving token, estimated wait minutes, and `is_next`.
 
 **Response** `200`
 ```json
@@ -839,7 +885,7 @@ Token admin manually sends a reminder notification to the patient for a specific
 ---
 
 ### POST `/api/v1/tokens/<id>/complete/`
-Token admin manually marks a token as completed.
+Token admin manually marks an active token as completed.
 
 **Auth**: `token_admin` or `admin`
 
@@ -856,7 +902,7 @@ Token admin manually marks a token as completed.
 ---
 
 ### POST `/api/v1/tokens/<id>/missed/`
-Token admin marks a token as missed (status must be `waiting`).
+Token admin marks an active token as missed.
 
 **Auth**: `token_admin` or `admin`
 
@@ -872,8 +918,32 @@ Token admin marks a token as missed (status must be `waiting`).
 
 ---
 
+### POST `/api/v1/departments/<dept_id>/queue/call-next/`
+Reception calls the next token for a department.
+
+**Auth**: `token_admin` or `admin`
+
+**Payload**
+```json
+{
+  "counter_id": 3,
+  "complete_current": true
+}
+```
+> `counter_id` is optional. `complete_current` defaults to `true`, so the previous `called` token is completed before the next one is called.
+
+**Response** `200`
+```json
+{
+  "message": "Next token called.",
+  "data": { "...token object with status": "called" }
+}
+```
+
+---
+
 ### GET `/api/v1/departments/<dept_id>/queue/`
-Get the live queue for a department (waiting + checked_in tokens only).
+Get the live queue for a department (`called`, `waiting`, and `checked_in` tokens).
 
 **Auth**: Required
 
@@ -893,12 +963,77 @@ Get the live queue for a department (waiting + checked_in tokens only).
       "id": 42,
       "token_number": 7,
       "status": "waiting",
+      "department_name": "Cardiology",
       "patient_name": "John Doe",
       "patient_phone": "9876543210",
+      "counter": null,
+      "counter_name": null,
+      "is_emergency": false,
       "estimated_time": "2025-01-15T11:30:00Z",
-      "checked_in_at": null
+      "estimated_wait_minutes": 20,
+      "queue_position": 3,
+      "tokens_away": 2,
+      "people_ahead": 2,
+      "is_next": false,
+      "current_serving_token_number": 5,
+      "reminder_threshold_tokens": 3,
+      "checked_in_at": null,
+      "called_at": null
     }
   ]
+}
+```
+
+---
+
+### GET `/api/v1/departments/<dept_id>/queue/summary/`
+Get a compact live queue summary for the admin/reception dashboard.
+
+**Auth**: Required
+
+**Response** `200`
+```json
+{
+  "message": "Success",
+  "data": {
+    "department_id": 1,
+    "department_name": "Cardiology",
+    "date": "2025-01-15",
+    "average_service_time": 10,
+    "reminder_threshold_tokens": 3,
+    "waiting_count": 8,
+    "emergency_count": 1,
+    "current_serving": { "...queue token object..." : "..." },
+    "up_next": { "...queue token object..." : "..." }
+  }
+}
+```
+
+---
+
+### GET/PATCH `/api/v1/departments/<dept_id>/token-config/`
+Read or update token timing configuration for a department.
+
+**Auth**: `token_admin` or `admin`
+
+**PATCH Payload**
+```json
+{
+  "average_service_time": 9,
+  "reminder_threshold_tokens": 3
+}
+```
+
+**Response** `200`
+```json
+{
+  "message": "Token timing config updated.",
+  "data": {
+    "id": 1,
+    "name": "Cardiology",
+    "average_service_time": 9,
+    "reminder_threshold_tokens": 3
+  }
 }
 ```
 

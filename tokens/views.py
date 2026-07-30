@@ -1,18 +1,24 @@
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework.permissions import IsAuthenticated
 from common.responses import success_response, error_response
 from accounts.permissions import IsTokenAdminOrAdmin
-from .serializers import TokenSerializer, IssueTokenSerializer, QueueSerializer
+from .serializers import (
+    CallNextSerializer,
+    IssueTokenSerializer,
+    QueueSerializer,
+    TokenConfigSerializer,
+    TokenSerializer,
+)
 from . import services
 
 
 class IssueTokenView(APIView):
     """
     Issue a token.
-    - Token admin can issue for any patient (provide patient_id).
+    - Reception/token admin can issue for any patient (patient_id or patient_phone).
     - Regular patients can issue for themselves (omit patient_id).
     """
-    permission_classes = [IsTokenAdminOrAdmin]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         serializer = IssueTokenSerializer(data=request.data)
@@ -22,6 +28,10 @@ class IssueTokenView(APIView):
             department_id=serializer.validated_data["department_id"],
             issue_reason=serializer.validated_data.get("issue_reason", ""),
             patient_id=serializer.validated_data.get("patient_id"),
+            patient_phone=serializer.validated_data.get("patient_phone", ""),
+            patient_name=serializer.validated_data.get("patient_name", ""),
+            counter_id=serializer.validated_data.get("counter_id"),
+            is_emergency=serializer.validated_data.get("is_emergency", False),
         )
         return success_response(TokenSerializer(token).data)
 
@@ -31,7 +41,15 @@ class MyTokensView(APIView):
 
     def get(self, request):
         from .models import PatientToken
-        tokens = PatientToken.objects.filter(patient=request.user).order_by("-created_at")
+        tokens = PatientToken.objects.filter(patient=request.user).select_related("department", "counter").order_by("-created_at")
+        return success_response(TokenSerializer(tokens, many=True).data)
+
+
+class MyActiveTodayTokensView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        tokens = services.get_today_active_tokens(request.user)
         return success_response(TokenSerializer(tokens, many=True).data)
 
 
@@ -92,6 +110,76 @@ class QueueView(APIView):
             date = datetime.date.fromisoformat(date)
         queue = services.get_queue(dept_pk, date)
         return success_response(QueueSerializer(queue, many=True).data)
+
+
+class QueueSummaryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, dept_pk):
+        date = request.query_params.get("date")
+        if date:
+            import datetime
+            date = datetime.date.fromisoformat(date)
+
+        summary = services.get_queue_summary(dept_pk, date)
+        data = {
+            "department_id": summary["department_id"],
+            "department_name": summary["department_name"],
+            "date": summary["date"].isoformat(),
+            "average_service_time": summary["average_service_time"],
+            "reminder_threshold_tokens": summary["reminder_threshold_tokens"],
+            "waiting_count": summary["waiting_count"],
+            "emergency_count": summary["emergency_count"],
+            "current_serving": (
+                QueueSerializer(summary["current_serving"]).data
+                if summary["current_serving"]
+                else None
+            ),
+            "up_next": (
+                QueueSerializer(summary["up_next"]).data
+                if summary["up_next"]
+                else None
+            ),
+        }
+        return success_response(data)
+
+
+class CallNextTokenView(APIView):
+    permission_classes = [IsTokenAdminOrAdmin]
+
+    def post(self, request, dept_pk):
+        serializer = CallNextSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        token = services.call_next_token(
+            department_id=dept_pk,
+            counter_id=serializer.validated_data.get("counter_id"),
+            complete_current=serializer.validated_data.get("complete_current", True),
+        )
+        return success_response(TokenSerializer(token).data, message="Next token called.")
+
+
+class TokenConfigView(APIView):
+    permission_classes = [IsTokenAdminOrAdmin]
+
+    def _get_department(self, dept_pk):
+        from common.exceptions import ServiceError
+        from departments.models import Department
+
+        try:
+            return Department.objects.get(pk=dept_pk, is_active=True)
+        except Department.DoesNotExist:
+            raise ServiceError("Department not found or inactive.")
+
+    def get(self, request, dept_pk):
+        return success_response(TokenConfigSerializer(self._get_department(dept_pk)).data)
+
+    def patch(self, request, dept_pk):
+        department = self._get_department(dept_pk)
+        serializer = TokenConfigSerializer(department, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        services.refresh_queue_estimates(department)
+        return success_response(serializer.data, message="Token timing config updated.")
 
 
 class PatientListView(APIView):

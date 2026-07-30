@@ -32,12 +32,14 @@ class PatientToken(BaseModel):
     estimated_time = models.DateTimeField(null=True, blank=True)
     checked_in_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    called_at = models.DateTimeField(null=True, blank=True)
+    is_emergency = models.BooleanField(default=False)
     issue_reason = models.TextField(blank=True, help_text="Patient's complaint / reason for visit")
     notes = models.TextField(blank=True)
 
     class Meta:
         unique_together = ("department", "date", "token_number")
-        ordering = ["date", "token_number"]
+        ordering = ["date", "-is_emergency", "token_number"]
 
     def __str__(self):
         return f"Token #{self.token_number} - {self.department.name} ({self.status})"

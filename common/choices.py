@@ -21,6 +21,7 @@ class Gender(models.TextChoices):
 class TokenStatus(models.TextChoices):
     WAITING = "waiting", "Waiting"
     CHECKED_IN = "checked_in", "Checked In"
+    CALLED = "called", "Called"
     COMPLETED = "completed", "Completed"
     CANCELLED = "cancelled", "Cancelled"
     MISSED = "missed", "Missed"

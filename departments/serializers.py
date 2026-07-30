@@ -13,4 +13,12 @@ class DepartmentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Department
-        fields = ["id", "name", "description", "is_active", "average_service_time", "counters"]
+        fields = [
+            "id",
+            "name",
+            "description",
+            "is_active",
+            "average_service_time",
+            "reminder_threshold_tokens",
+            "counters",
+        ]

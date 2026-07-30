@@ -7,6 +7,10 @@ class Department(BaseModel):
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
     average_service_time = models.PositiveIntegerField(default=10, help_text="Minutes per patient")
+    reminder_threshold_tokens = models.PositiveIntegerField(
+        default=3,
+        help_text="Notify patients when they are this many tokens away",
+    )
 
     def __str__(self):
         return self.name

@@ -102,7 +102,7 @@ def send_fcm_to_department(department_id: int, title: str, body: str, data: dict
         PatientToken.objects.filter(
             department_id=department_id,
             date=today,
-            status__in=[TokenStatus.WAITING, TokenStatus.CHECKED_IN],
+            status__in=[TokenStatus.WAITING, TokenStatus.CHECKED_IN, TokenStatus.CALLED],
         )
         .values_list("patient_id", flat=True)
         .distinct()
@@ -161,7 +161,7 @@ def send_fcm_to_all_active_patients(department_id: int = None, title: str = "", 
     today = timezone.now().date()
     filters = {
         "date": today,
-        "status__in": [TokenStatus.WAITING, TokenStatus.CHECKED_IN],
+        "status__in": [TokenStatus.WAITING, TokenStatus.CHECKED_IN, TokenStatus.CALLED],
     }
     if department_id:
         filters["department_id"] = department_id

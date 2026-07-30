@@ -1,6 +1,8 @@
 from django.urls import path
 from .views import (
+    CallNextTokenView,
     IssueTokenView,
+    MyActiveTodayTokensView,
     MyTokensView,
     TokenDetailView,
     CheckInView,
@@ -8,13 +10,16 @@ from .views import (
     CompleteTokenView,
     MissedTokenView,
     QueueView,
+    QueueSummaryView,
     PatientListView,
     SendReminderView,
+    TokenConfigView,
 )
 
 urlpatterns = [
     path("tokens/issue/", IssueTokenView.as_view(), name="token-issue"),
     path("tokens/my/", MyTokensView.as_view(), name="token-my"),
+    path("tokens/my/active-today/", MyActiveTodayTokensView.as_view(), name="token-my-active-today"),
     path("tokens/patients/", PatientListView.as_view(), name="token-patients"),
     path("tokens/<int:pk>/", TokenDetailView.as_view(), name="token-detail"),
     path("tokens/<int:pk>/check-in/", CheckInView.as_view(), name="token-checkin"),
@@ -23,4 +28,7 @@ urlpatterns = [
     path("tokens/<int:pk>/missed/", MissedTokenView.as_view(), name="token-missed"),
     path("tokens/<int:pk>/send-reminder/", SendReminderView.as_view(), name="token-send-reminder"),
     path("departments/<int:dept_pk>/queue/", QueueView.as_view(), name="department-queue"),
+    path("departments/<int:dept_pk>/queue/summary/", QueueSummaryView.as_view(), name="department-queue-summary"),
+    path("departments/<int:dept_pk>/queue/call-next/", CallNextTokenView.as_view(), name="department-queue-call-next"),
+    path("departments/<int:dept_pk>/token-config/", TokenConfigView.as_view(), name="department-token-config"),
 ]
